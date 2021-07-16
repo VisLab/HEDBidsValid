@@ -312,7 +312,11 @@ describe('HED tag string utility functions', () => {
         testStrings,
         expectedResults,
         (string, hedSchemas) => {
-          return hed.tagTakesValue(string, hedSchemas.baseSchema.attributes)
+          return hed.tagTakesValue(
+            string,
+            hedSchemas.baseSchema.attributes,
+            false,
+          )
         },
       )
     })

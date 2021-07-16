@@ -166,7 +166,11 @@ const checkCapitalization = function (tag, hedSchemas, doSemanticValidation) {
   const tagNames = tag.originalTag.split('/')
   if (
     doSemanticValidation &&
-    utils.HED.tagTakesValue(tag.formattedTag, hedSchemas.baseSchema.attributes)
+    utils.HED.tagTakesValue(
+      tag.formattedTag,
+      hedSchemas.baseSchema.attributes,
+      hedSchemas.isHed3,
+    )
   ) {
     tagNames.pop()
   }
@@ -402,6 +406,7 @@ const checkValueTagSyntax = function (tag, hedSchemas, allowPlaceholders) {
     utils.HED.tagTakesValue(
       tag.formattedTag,
       hedSchemas.baseSchema.attributes,
+      hedSchemas.isHed3,
     ) &&
     !utils.HED.isUnitClassTag(
       tag.formattedTag,
@@ -444,7 +449,11 @@ const checkIfTagIsValid = function (
       tag.formattedTag,
       hedSchemas.baseSchema.attributes,
     ) || // This tag itself exists in the HED schema.
-    utils.HED.tagTakesValue(tag.formattedTag, hedSchemas.baseSchema.attributes) // This tag is a valid value-taking tag in the HED schema.
+    utils.HED.tagTakesValue(
+      tag.formattedTag,
+      hedSchemas.baseSchema.attributes,
+      hedSchemas.isHed3,
+    ) // This tag is a valid value-taking tag in the HED schema.
   ) {
     return []
   }
@@ -457,7 +466,11 @@ const checkIfTagIsValid = function (
     const valueTag = utils.HED.replaceTagNameWithPound(tag.formattedTag)
     if (
       valueTag.split('#').length !== 2 || // To avoid a redundant issue.
-      utils.HED.tagTakesValue(valueTag, hedSchemas.baseSchema.attributes)
+      utils.HED.tagTakesValue(
+        valueTag,
+        hedSchemas.baseSchema.attributes,
+        hedSchemas.isHed3,
+      )
     ) {
       return []
     } else {
@@ -474,6 +487,7 @@ const checkIfTagIsValid = function (
     utils.HED.tagTakesValue(
       previousTag.formattedTag,
       hedSchemas.baseSchema.attributes,
+      hedSchemas.isHed3,
     )
   ) {
     // This tag isn't an allowed extension, but the previous tag takes a value.
@@ -531,6 +545,97 @@ const checkPlaceholderTagSyntax = function (tag) {
   }
 }
 
+/**
+ * Check full-string placeholder syntax.
+ *
+ * @param {ParsedHedString} parsedString The parsed HED string.
+ * @param {Schemas} hedSchemas The HED schema collection.
+ * @return {Issue[]} Any issues found.
+ */
+const checkPlaceholderStringSyntax = function (parsedString) {
+  const issues = []
+  let standalonePlaceholders = 0
+  let definitionPlaceholders
+  let standaloneIssueGenerated = false
+  let firstStandaloneTag = ''
+  for (const tag of parsedString.topLevelTags) {
+    const tagString = tag.formattedTag
+    standalonePlaceholders += utils.string.getCharacterCount(tagString, '#')
+    if (standalonePlaceholders === 1) {
+      firstStandaloneTag = tag.originalTag
+    } else if (standalonePlaceholders > 1) {
+      if (!standaloneIssueGenerated) {
+        issues.push(
+          generateIssue('invalidPlaceholder', {
+            tag: firstStandaloneTag,
+          }),
+        )
+      }
+      issues.push(
+        generateIssue('invalidPlaceholder', {
+          tag: tag.originalTag,
+        }),
+      )
+      standaloneIssueGenerated = true
+      break
+    }
+  }
+  for (const tagGroup of parsedString.tagGroups) {
+    if (tagGroup.isDefinitionGroup) {
+      definitionPlaceholders = 0
+      const isDefinitionPlaceholder =
+        utils.HED.getTagName(tagGroup.definitionTag.formattedTag) === '#'
+      const definitionName = isDefinitionPlaceholder
+        ? utils.HED.getTagName(
+            utils.HED.getParentTag(tagGroup.definitionTag.originalTag),
+          )
+        : utils.HED.getTagName(tagGroup.definitionTag.originalTag)
+      for (const tag of tagGroup.tagIterator()) {
+        if (isDefinitionPlaceholder && tag === tagGroup.definitionTag) {
+          continue
+        }
+        const tagString = tag.formattedTag
+        definitionPlaceholders += utils.string.getCharacterCount(tagString, '#')
+      }
+      if (
+        !(
+          (!isDefinitionPlaceholder && definitionPlaceholders === 0) ||
+          (isDefinitionPlaceholder && definitionPlaceholders === 1)
+        )
+      ) {
+        issues.push(
+          generateIssue('invalidPlaceholderInDefinition', {
+            definition: definitionName,
+          }),
+        )
+      }
+    } else if (!standaloneIssueGenerated) {
+      for (const tag of tagGroup.tagIterator()) {
+        const tagString = tag.formattedTag
+        standalonePlaceholders += utils.string.getCharacterCount(tagString, '#')
+        if (standalonePlaceholders === 1) {
+          firstStandaloneTag = tag.originalTag
+        } else if (standalonePlaceholders > 1) {
+          if (!standaloneIssueGenerated) {
+            issues.push(
+              generateIssue('invalidPlaceholder', {
+                tag: firstStandaloneTag,
+              }),
+            )
+          }
+          issues.push(
+            generateIssue('invalidPlaceholder', {
+              tag: tag.originalTag,
+            }),
+          )
+          standaloneIssueGenerated = true
+        }
+      }
+    }
+  }
+  return issues
+}
+
 // HED 3 checks
 
 /**
@@ -581,7 +686,7 @@ const checkDefinitionSyntax = function (tagGroup, hedSchemas) {
   }
   let tagGroupValidated = false
   let tagGroupIssueGenerated = false
-  const nestedDefintionParentTags = [
+  const nestedDefinitionParentTags = [
     definitionParentTag,
     defExpandParentTag,
     defParentTag,
@@ -600,8 +705,8 @@ const checkDefinitionSyntax = function (tagGroup, hedSchemas) {
       tagGroupValidated = true
       for (const innerTag of tag.tagIterator()) {
         if (
-          nestedDefintionParentTags.includes(innerTag.canonicalTag) ||
-          nestedDefintionParentTags.includes(
+          nestedDefinitionParentTags.includes(innerTag.canonicalTag) ||
+          nestedDefinitionParentTags.includes(
             utils.HED.getParentTag(innerTag.canonicalTag),
           )
         ) {
@@ -714,15 +819,33 @@ const checkForInvalidTopLevelTagGroupTags = function (
 // Validation groups
 
 /**
- * Validate the full HED string.
+ * Validate the full unparsed HED string.
+ *
+ * @param {string} hedString The unparsed HED string.
+ * @return {Issues[][]} String substitution issues and other issues.
  */
-const validateFullHedString = function (hedString) {
+const validateFullUnparsedHedString = function (hedString) {
   const [fixedHedString, substitutionIssues] = substituteCharacters(hedString)
   const issues = [].concat(
     countTagGroupParentheses(fixedHedString),
     findDelimiterIssuesInHedString(fixedHedString),
   )
   return [substitutionIssues, issues]
+}
+
+/**
+ * Validate the full parsed HED string.
+ *
+ * @param {ParsedHedString} parsedString The parsed HED string to validate.
+ * @param {boolean} allowPlaceholders Whether to treat value-taking tags with '#' placeholders as valid.
+ * @return {Issue[]} Any issues found.
+ */
+const validateFullParsedHedString = function (parsedString, allowPlaceholders) {
+  if (allowPlaceholders) {
+    return checkPlaceholderStringSyntax(parsedString)
+  } else {
+    return []
+  }
 }
 
 /**
@@ -734,6 +857,7 @@ const validateIndividualHedTag = function (
   hedSchemas,
   doSemanticValidation,
   checkForWarnings,
+  isEventLevel,
   allowPlaceholders,
 ) {
   let issues = []
@@ -753,8 +877,12 @@ const validateIndividualHedTag = function (
         allowPlaceholders,
       ),
       checkIfTagRequiresChild(tag, hedSchemas),
-      checkValueTagSyntax(tag, hedSchemas, allowPlaceholders),
     )
+    if (!isEventLevel) {
+      issues = issues.concat(
+        checkValueTagSyntax(tag, hedSchemas, allowPlaceholders),
+      )
+    }
   }
   if (checkForWarnings) {
     issues = issues.concat(
@@ -775,6 +903,7 @@ const validateIndividualHedTags = function (
   hedSchemas,
   doSemanticValidation,
   checkForWarnings,
+  isEventLevel,
   allowPlaceholders = false,
 ) {
   let issues = []
@@ -788,6 +917,7 @@ const validateIndividualHedTags = function (
         hedSchemas,
         doSemanticValidation,
         checkForWarnings,
+        isEventLevel,
         allowPlaceholders,
       ),
     )
@@ -943,9 +1073,8 @@ const initiallyValidateHedString = function (
   }
   // Skip parsing if we're passed an already-parsed string.
   if (hedString instanceof ParsedHedString) {
-    const [substitutionIssues, fullHedStringIssues] = validateFullHedString(
-      hedString.hedString,
-    )
+    const [substitutionIssues, fullHedStringIssues] =
+      validateFullUnparsedHedString(hedString.hedString)
     if (fullHedStringIssues.length !== 0) {
       return [
         false,
@@ -957,7 +1086,7 @@ const initiallyValidateHedString = function (
     return [true, true, substitutionIssues, hedString]
   } else {
     const [substitutionIssues, fullHedStringIssues] =
-      validateFullHedString(hedString)
+      validateFullUnparsedHedString(hedString)
     if (fullHedStringIssues.length !== 0) {
       return [
         false,
@@ -1013,11 +1142,13 @@ const validateHedString = function (
   }
 
   const issues = initialIssues.concat(
+    validateFullParsedHedString(parsedString, allowPlaceholders),
     validateIndividualHedTags(
       parsedString,
       hedSchemas,
       doSemanticValidation,
       checkForWarnings,
+      false,
       allowPlaceholders,
     ),
     validateHedTagGroups(parsedString, hedSchemas, doSemanticValidation),
@@ -1065,6 +1196,7 @@ const validateHedEvent = function (
       hedSchemas,
       doSemanticValidation,
       checkForWarnings,
+      true,
     ),
     validateHedTagLevels(parsedString, hedSchemas, doSemanticValidation),
     validateHedTagGroups(parsedString),

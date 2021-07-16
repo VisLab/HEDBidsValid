@@ -64,6 +64,23 @@ const getParentTag = function (tag, character = '/') {
   }
 }
 
+const ancestorIterator = function* (tag) {
+  while (tag.lastIndexOf('/') >= 0) {
+    yield tag
+    tag = getParentTag(tag)
+  }
+  yield tag
+}
+
+const isDescendantOf = function (tag, parent) {
+  for (const ancestor of ancestorIterator(tag)) {
+    if (ancestor === parent) {
+      return true
+    }
+  }
+  return false
+}
+
 const hed2ValidValueCharacters = /^[-a-zA-Z0-9.$%^+_; :]+$/
 const hed3ValidValueCharacters = /^[-a-zA-Z0-9.$%^+_; ]+$/
 /**
@@ -201,9 +218,19 @@ const tagExistsInSchema = function (formattedTag, hedSchemaAttributes) {
 /**
  * Checks if a HED tag has the 'takesValue' attribute.
  */
-const tagTakesValue = function (formattedTag, hedSchemaAttributes) {
-  const takesValueTag = replaceTagNameWithPound(formattedTag)
-  return hedSchemaAttributes.tagHasAttribute(takesValueTag, takesValueType)
+const tagTakesValue = function (formattedTag, hedSchemaAttributes, isHed3) {
+  if (isHed3) {
+    for (const ancestor of ancestorIterator(formattedTag)) {
+      const takesValueTag = replaceTagNameWithPound(ancestor)
+      if (hedSchemaAttributes.tagHasAttribute(takesValueTag, takesValueType)) {
+        return true
+      }
+    }
+    return false
+  } else {
+    const takesValueTag = replaceTagNameWithPound(formattedTag)
+    return hedSchemaAttributes.tagHasAttribute(takesValueTag, takesValueType)
+  }
 }
 
 /**
@@ -316,6 +343,7 @@ module.exports = {
   getTagSlashIndices: getTagSlashIndices,
   getTagName: getTagName,
   getParentTag: getParentTag,
+  isDescendantOf: isDescendantOf,
   validateValue: validateValue,
   validateUnits: validateUnits,
   tagExistsInSchema: tagExistsInSchema,

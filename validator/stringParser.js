@@ -62,17 +62,52 @@ const ParsedHedTag = function (
 }
 
 /**
+ * Determine a parsed HED tag group's Definition tags.
+ *
+ * @param {ParsedHedGroup} group The parsed HED tag group.
+ * @param {Schemas} hedSchemas The collection of HED schemas.
+ * @return {null|ParsedHedTag[]|ParsedHedTag} The Definition tag(s)
+ */
+const groupDefinitionTag = function (group, hedSchemas) {
+  const definitionTags = group.tags.filter((tag) => {
+    return (
+      hedSchemas.baseSchema &&
+      tag instanceof ParsedHedTag &&
+      utils.HED.isDescendantOf(
+        tag.canonicalTag,
+        convertPartialHedStringToLong(
+          hedSchemas,
+          'Definition',
+          'Definition',
+          0,
+        )[0],
+      )
+    )
+  })
+  switch (definitionTags.length) {
+    case 0:
+      return null
+    case 1:
+      return definitionTags[0]
+    default:
+      return definitionTags
+  }
+}
+
+/**
  * A parsed HED tag group.
  *
  * @param {(ParsedHedTag|ParsedHedGroup)[]} parsedHedTags The parsed HED tags in the HED tag group.
  * @param {string} originalTagGroup The original pre-parsed version of the HED tag group.
  * @param {int[]} originalBounds The bounds of the HED tag group in the original HED string.
+ * @param {Schemas} hedSchemas The collection of HED schemas.
  * @constructor
  */
 const ParsedHedGroup = function (
   originalTagGroup,
   parsedHedTags,
   originalBounds,
+  hedSchemas,
 ) {
   /**
    * The parsed HED tags in the HED tag group.
@@ -89,6 +124,16 @@ const ParsedHedGroup = function (
    * @type {int[]}
    */
   this.originalBounds = originalBounds
+  /**
+   * The Definition tag associated with this HED tag group.
+   * @type {ParsedHedTag|ParsedHedTag[]|null}
+   */
+  this.definitionTag = groupDefinitionTag(this, hedSchemas)
+  /**
+   * Whether this HED tag group is a definition group.
+   * @type {boolean}
+   */
+  this.isDefinitionGroup = this.definitionTag !== null
   /**
    * Iterator over the parsed HED tags in this HED tag group.
    * @return {Generator<*, ParsedHedTag, *>}
@@ -137,7 +182,7 @@ const ParsedHedString = function (hedString) {
    */
   this.tags = []
   /**
-   * The tag groups in the string, split into arrays.
+   * The tag groups in the string.
    * @type ParsedHedGroup[]
    */
   this.tagGroups = []
@@ -156,6 +201,11 @@ const ParsedHedString = function (hedString) {
    * @type ParsedHedTag[][]
    */
   this.topLevelTagGroups = []
+  /**
+   * The definition tag groups in the string.
+   * @type ParsedHedGroup[]
+   */
+  this.definitionGroups = []
 }
 
 /**
@@ -315,6 +365,7 @@ const findTagGroups = function (
         tagOrGroup.originalTag,
         nestedGroupTagList,
         tagOrGroup.originalBounds,
+        hedSchemas,
       )
       if (isTopLevel) {
         parsedString.tagGroupStrings.push(tagOrGroup)
@@ -329,6 +380,9 @@ const findTagGroups = function (
     } else if (!parsedString.tags.includes(tagOrGroup)) {
       parsedString.tags.push(tagOrGroup)
     }
+  })
+  parsedString.definitionGroups = parsedString.tagGroups.filter((group) => {
+    return group.isDefinitionGroup
   })
   return issues
 }
